@@ -123,6 +123,38 @@ const fetchWithFix = wrapFetchForDeepSeekThinking(globalThis.fetch, {
 | `ensureThinkingEnabled` | `true` | Auto-add `thinking: { type: "enabled", budget_tokens: N }` to Anthropic requests |
 | `defaultBudgetTokens` | `8000` | Budget tokens used by the above |
 | `handleOpenAI` | `true` | Also handle OpenAI-compatible `/chat/completions` bodies |
+| `placeholder.mode` | `"fallback"` | `off` / `fallback` / `always` — inject placeholder `reasoning_content` to rescue old conversations (OpenAI path only) |
+| `placeholder.text` | `"(thinking omitted)"` | Text used when a placeholder is injected. Avoid pure-whitespace values; some relays will trim them back to empty. |
+| `placeholder.field` | `"reasoning_content"` | Which field to fill: `reasoning_content`, `reasoning`, or `both` |
+
+### Rescuing previously failed conversations
+
+If you already have sessions that were broken by the "must pass back thinking" error, you can't recover the real thinking content — it was never captured. For OpenAI-compat endpoints DeepSeek only checks that `reasoning_content` **exists and is non-empty**, not its signature, so a harmless placeholder is enough to get the history to replay.
+
+This is exactly what `placeholder.mode = "fallback"` does (on by default): when cache misses, every assistant message in the request gets a `reasoning_content` placeholder so the request goes through. Going forward, new turns will be captured for real and will replace the placeholder.
+
+Configure it via the opencode provider options:
+
+```json
+{
+  "provider": {
+    "deepseek": {
+      "options": {
+        "debugThinking": true,
+        "thinkingPlaceholder": { "mode": "fallback", "text": "(omitted)" }
+      }
+    }
+  }
+}
+```
+
+Turn it off if you'd rather see the error than risk sending a fake reasoning field:
+
+```json
+{ "provider": { "deepseek": { "options": { "thinkingPlaceholder": { "mode": "off" } } } } }
+```
+
+Note: Anthropic-compatible requests (`/v1/messages`) **never** get placeholders. The `signature` on `thinking` blocks is cryptographic and can't be faked — faking it would just produce a different error. For those endpoints the cache-based replay is your only option; conversations that never went through the plugin cannot be recovered.
 
 ---
 

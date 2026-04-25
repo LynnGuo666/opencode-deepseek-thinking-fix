@@ -113,3 +113,64 @@ export function stripReasoningForFingerprint(msg: OpenAIMessage): OpenAIMessage 
   const { reasoning_content: _a, reasoning: _b, ...rest } = msg;
   return rest as OpenAIMessage;
 }
+
+/**
+ * Decide whether a given assistant message needs reasoning content to be
+ * replayed.
+ *
+ * Aggressive strategy: any `role === "assistant"` qualifies. DeepSeek's
+ * server-side check only verifies that `reasoning_content` exists and is
+ * non-empty — over-filling never corrupts prefill or attention because the
+ * model conditions on `content`, not on the reasoning field. Filtering by
+ * content/tool_calls historically dropped legitimate but minimal assistant
+ * turns (`content: ""`, `content: null`, pure-thinking turns) and caused
+ * rescue to silently miss them.
+ */
+export function isHistoricalAssistantMessage(msg: OpenAIMessage): boolean {
+  return msg.role === "assistant";
+}
+
+export interface PlaceholderOptions {
+  /** off: never inject. fallback: only when cache missed. always: unconditionally. */
+  mode: "off" | "fallback" | "always";
+  /** Text used for the placeholder. Must be non-empty. */
+  text: string;
+  /** Which field to fill. Default: "reasoning_content". */
+  field?: "reasoning_content" | "reasoning" | "both";
+}
+
+/**
+ * Fill `reasoning_content` / `reasoning` on assistant history messages that
+ * still don't have any. Returns number of messages mutated.
+ *
+ * Call this AFTER `reinjectReasoningContent` so cached real thinking wins.
+ */
+export function fillReasoningPlaceholder(
+  body: OpenAIChatRequestBody,
+  opts: PlaceholderOptions,
+): number {
+  if (opts.mode === "off") return 0;
+  if (!body?.messages?.length) return 0;
+  const text =
+    opts.text && opts.text.length > 0 ? opts.text : "(thinking omitted)";
+  const field = opts.field ?? "reasoning_content";
+  let mutated = 0;
+
+  for (const m of body.messages) {
+    if (!isHistoricalAssistantMessage(m)) continue;
+    if (opts.mode === "fallback" && hasReasoning(m)) continue;
+    if (field === "reasoning_content" || field === "both") {
+      if (!m.reasoning_content) {
+        m.reasoning_content = text;
+        mutated++;
+      }
+    }
+    if (field === "reasoning" || field === "both") {
+      if (!m.reasoning) {
+        m.reasoning = text;
+        mutated++;
+      }
+    }
+  }
+  return mutated;
+}

@@ -10,8 +10,10 @@ import {
   reinjectReasoningContent,
   extractReasoningFromOpenAIResponse,
   assistantTurnFingerprintOpenAI,
+  fillReasoningPlaceholder,
   type OpenAIChatRequestBody,
   type OpenAIReasoningPayload,
+  type PlaceholderOptions,
 } from "./messages-openai.js";
 import { interceptOpenAIStreamForReasoning } from "./stream-openai.js";
 
@@ -34,6 +36,20 @@ export interface DeepSeekThinkingFixOptions {
    * Default: true.
    */
   handleOpenAI?: boolean;
+  /**
+   * Placeholder reasoning injection for OpenAI-compatible requests.
+   *
+   * Useful for rescuing old conversations whose real thinking content was
+   * never captured. Only applied when protocol === "openai" — Anthropic
+   * thinking blocks use cryptographic signatures that can't be faked.
+   *
+   * - mode "off"       : never inject placeholders
+   * - mode "fallback"  : only when cache miss left an assistant without reasoning (default)
+   * - mode "always"    : fill every historical assistant turn regardless of cache
+   *
+   * Default: { mode: "fallback", text: "(thinking omitted)" }.
+   */
+  placeholder?: Partial<PlaceholderOptions>;
 }
 
 type FetchFn = (
@@ -83,6 +99,13 @@ export function wrapFetchForDeepSeekThinking(
     defaultBudgetTokens = 8000,
     handleOpenAI = true,
   } = opts;
+  const placeholderOpts: PlaceholderOptions = {
+    mode: opts.placeholder?.mode ?? "fallback",
+    // Use a recognizable non-whitespace string so that relays which trim
+    // payloads can't accidentally collapse the placeholder back to empty.
+    text: opts.placeholder?.text ?? "(thinking omitted)",
+    field: opts.placeholder?.field ?? "reasoning_content",
+  };
 
   const anthCache = new ThinkingCache(ttlMs);
   const oaCache = new Map<string, { payload: OpenAIReasoningPayload; at: number }>();
@@ -209,6 +232,15 @@ export function wrapFetchForDeepSeekThinking(
       console.log("[deepseek-thinking-fix][openai] re-injected reasoning_content");
     }
 
+    if (placeholderOpts.mode !== "off") {
+      const filled = fillReasoningPlaceholder(body, placeholderOpts);
+      if (filled > 0 && debug) {
+        console.log(
+          `[deepseek-thinking-fix][openai] placeholder filled ${filled} assistant message(s) (mode=${placeholderOpts.mode})`,
+        );
+      }
+    }
+
     const newInit: RequestInit = { ...init, body: JSON.stringify(body) };
     const response = await upstreamFetch(url, newInit);
 
@@ -290,7 +322,14 @@ const DeepSeekThinkingFix = (async (_ctx: unknown) => {
         const originalFetch: FetchFn | undefined = p.options.fetch;
         p.options.fetch = wrapFetchForDeepSeekThinking(
           originalFetch ?? ((globalThis as any).fetch as FetchFn),
-          { debug: !!p.options?.debugThinking },
+          {
+            debug: !!p.options?.debugThinking,
+            placeholder: p.options?.thinkingPlaceholder,
+            ttlMs: p.options?.thinkingTtlMs,
+            ensureThinkingEnabled: p.options?.ensureThinkingEnabled,
+            defaultBudgetTokens: p.options?.defaultBudgetTokens,
+            handleOpenAI: p.options?.handleOpenAI,
+          },
         );
       }
     },
@@ -316,4 +355,9 @@ export default DeepSeekThinkingFix;
 export { DeepSeekThinkingFix };
 export { ThinkingCache, fingerprint, assistantTurnFingerprint };
 export type { ThinkingBlock, AnthropicRequestBody };
-export type { OpenAIChatRequestBody, OpenAIReasoningPayload };
+export type {
+  OpenAIChatRequestBody,
+  OpenAIReasoningPayload,
+  PlaceholderOptions,
+} from "./messages-openai.js";
+export { fillReasoningPlaceholder } from "./messages-openai.js";

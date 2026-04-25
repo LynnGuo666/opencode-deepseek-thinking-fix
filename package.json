@@ -1,7 +1,7 @@
 {
   "name": "opencode-deepseek-thinking-fix",
-  "version": "0.1.0",
-  "description": "OpenCode plugin that preserves DeepSeek-V4 (Anthropic-compatible) thinking blocks across turns by wrapping the provider fetch and re-injecting thinking content with signatures.",
+  "version": "0.2.1",
+  "description": "OpenCode plugin that preserves DeepSeek-V4 thinking content across turns (Anthropic + OpenAI protocols), with optional placeholder fallback to rescue broken conversations.",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
