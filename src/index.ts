@@ -79,6 +79,33 @@ function matchesDeepSeekKeyword(s: string): boolean {
   return DEEPSEEK_KEYWORDS.some((k) => lower.includes(k));
 }
 
+// Module-level singletons so that multiple wrapped providers share a single
+// cache. This lets reasoning captured under provider A be replayed when the
+// user later sends the same conversation through provider B (e.g. switching
+// between two relays that both serve deepseek). The first wrapped provider's
+// `ttlMs` wins; subsequent calls reuse the same instances.
+let sharedAnthCache: ThinkingCache | undefined;
+let sharedOaCache:
+  | Map<string, { payload: OpenAIReasoningPayload; at: number }>
+  | undefined;
+let sharedTtlMs: number | undefined;
+
+function getAnthCache(ttlMs: number): ThinkingCache {
+  if (!sharedAnthCache) {
+    sharedAnthCache = new ThinkingCache(ttlMs);
+    sharedTtlMs = ttlMs;
+  }
+  return sharedAnthCache;
+}
+
+function getOaCache(): Map<
+  string,
+  { payload: OpenAIReasoningPayload; at: number }
+> {
+  if (!sharedOaCache) sharedOaCache = new Map();
+  return sharedOaCache;
+}
+
 function detectProtocol(url: string, body: any): Protocol {
   const u = url.toLowerCase();
   if (u.includes("/v1/messages") || u.endsWith("/messages")) return "anthropic";
@@ -128,13 +155,14 @@ function wrapFetchForDeepSeekThinking(
     field: opts.placeholder?.field ?? "reasoning_content",
   };
 
-  const anthCache = new ThinkingCache(ttlMs);
-  const oaCache = new Map<string, { payload: OpenAIReasoningPayload; at: number }>();
+  const anthCache = getAnthCache(ttlMs);
+  const oaCache = getOaCache();
+  const effectiveTtlMs = sharedTtlMs ?? ttlMs;
 
   function oaGet(fp: string): OpenAIReasoningPayload | undefined {
     const e = oaCache.get(fp);
     if (!e) return;
-    if (Date.now() - e.at > ttlMs) {
+    if (Date.now() - e.at > effectiveTtlMs) {
       oaCache.delete(fp);
       return;
     }
