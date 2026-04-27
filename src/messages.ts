@@ -115,6 +115,60 @@ export function reinjectThinkingBlocks(
   return mutated;
 }
 
+export interface AnthropicPlaceholderOptions {
+  /** off: never inject. fallback: only when missing. always: unconditionally prepend. */
+  mode: "off" | "fallback" | "always";
+  /** Text used for the placeholder thinking block. Must be non-empty. */
+  text: string;
+  /**
+   * How to handle the `signature` field on the placeholder block.
+   * - "empty" (default): emit `signature: ""` — works for DeepSeek-V4
+   *   Anthropic-shape relays that don't validate signatures.
+   * - "omit": don't emit a `signature` field at all.
+   */
+  signaturePolicy?: "empty" | "omit";
+}
+
+/**
+ * Fill historical assistant messages with a placeholder `thinking` block when
+ * they are missing one. Mirrors `fillReasoningPlaceholder` on the OpenAI side.
+ *
+ * NOTE: real Anthropic validates `signature` cryptographically. This helper is
+ * intended for DeepSeek-V4 / relay endpoints that mimic the Anthropic shape
+ * but do not enforce the signature contract. Returns the number of mutated
+ * assistant messages.
+ *
+ * Call this AFTER `reinjectThinkingBlocks` so cached real thinking wins.
+ */
+export function fillThinkingPlaceholder(
+  body: AnthropicRequestBody,
+  opts: AnthropicPlaceholderOptions,
+): number {
+  if (opts.mode === "off") return 0;
+  if (!body?.messages?.length) return 0;
+  const text =
+    opts.text && opts.text.length > 0 ? opts.text : "(thinking omitted)";
+  const policy = opts.signaturePolicy ?? "empty";
+  let mutated = 0;
+
+  for (const m of body.messages) {
+    if (m.role !== "assistant") continue;
+    if (typeof m.content === "string") {
+      m.content = m.content ? [{ type: "text", text: m.content }] : [];
+    }
+    if (!Array.isArray(m.content)) continue;
+    if (opts.mode === "fallback" && hasThinkingBlock(m)) continue;
+
+    const block: AnthropicContentBlock =
+      policy === "empty"
+        ? { type: "thinking", thinking: text, signature: "" }
+        : { type: "thinking", thinking: text };
+    (m.content as AnthropicContentBlock[]).unshift(block);
+    mutated++;
+  }
+  return mutated;
+}
+
 /**
  * Extract thinking blocks from a non-streamed response body.
  */

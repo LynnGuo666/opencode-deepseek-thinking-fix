@@ -5,8 +5,16 @@
  */
 export { ThinkingCache, fingerprint } from "./cache.js";
 export type { ThinkingBlock } from "./cache.js";
-export { assistantTurnFingerprint } from "./messages.js";
-export type { AnthropicRequestBody } from "./messages.js";
+export {
+  assistantTurnFingerprint,
+  reinjectThinkingBlocks,
+  fillThinkingPlaceholder,
+  extractThinkingFromResponse,
+} from "./messages.js";
+export type {
+  AnthropicRequestBody,
+  AnthropicPlaceholderOptions,
+} from "./messages.js";
 export {
   fillReasoningPlaceholder,
   reinjectReasoningContent,

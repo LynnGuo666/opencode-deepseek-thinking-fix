@@ -3,7 +3,9 @@ import {
   reinjectThinkingBlocks,
   extractThinkingFromResponse,
   assistantTurnFingerprint,
+  fillThinkingPlaceholder,
   type AnthropicRequestBody,
+  type AnthropicPlaceholderOptions,
 } from "./messages.js";
 import { interceptStreamForThinking } from "./stream.js";
 import {
@@ -50,6 +52,16 @@ export interface DeepSeekThinkingFixOptions {
    * Default: { mode: "fallback", text: "(thinking omitted)" }.
    */
   placeholder?: Partial<PlaceholderOptions>;
+  /**
+   * Placeholder thinking-block injection for Anthropic-compatible requests.
+   *
+   * Mirrors `placeholder` but for Anthropic shape. Only applied when the
+   * upstream is a DeepSeek-V4 / relay endpoint that doesn't validate the
+   * cryptographic `signature` field. Real Anthropic will reject these.
+   *
+   * Default: { mode: "fallback", text: "(thinking omitted)", signaturePolicy: "empty" }.
+   */
+  anthropicPlaceholder?: Partial<AnthropicPlaceholderOptions>;
   /**
    * When true, the wrapper only acts on requests whose body has a `model`
    * field containing a deepseek keyword. Non-matching requests are passed
@@ -154,6 +166,11 @@ function wrapFetchForDeepSeekThinking(
     text: opts.placeholder?.text ?? "(thinking omitted)",
     field: opts.placeholder?.field ?? "reasoning_content",
   };
+  const anthPlaceholderOpts: AnthropicPlaceholderOptions = {
+    mode: opts.anthropicPlaceholder?.mode ?? "fallback",
+    text: opts.anthropicPlaceholder?.text ?? "(thinking omitted)",
+    signaturePolicy: opts.anthropicPlaceholder?.signaturePolicy ?? "empty",
+  };
 
   const anthCache = getAnthCache(ttlMs);
   const oaCache = getOaCache();
@@ -256,6 +273,19 @@ function wrapFetchForDeepSeekThinking(
     const mutated = reinjectThinkingBlocks(body, (fp) => anthCache.get(fp));
     if (mutated && debug) {
       console.log("[deepseek-thinking-fix][anthropic] re-injected thinking blocks");
+    }
+
+    if (anthPlaceholderOpts.mode !== "off") {
+      const filled = fillThinkingPlaceholder(body, anthPlaceholderOpts);
+      if (debug) {
+        console.log(
+          `[deepseek-thinking-fix][anthropic] placeholder filled ${filled} assistant message(s) (mode=${anthPlaceholderOpts.mode}, text="${anthPlaceholderOpts.text}", signaturePolicy=${anthPlaceholderOpts.signaturePolicy})`,
+        );
+      }
+    } else if (debug) {
+      console.log(
+        "[deepseek-thinking-fix][anthropic] placeholder skipped (mode=off)",
+      );
     }
 
     const newInit: RequestInit = { ...init, body: JSON.stringify(body) };
@@ -480,6 +510,7 @@ const DeepSeekThinkingFix = (async (_ctx: unknown) => {
           {
             debug: dbg,
             placeholder: p.options?.thinkingPlaceholder,
+            anthropicPlaceholder: p.options?.anthropicThinkingPlaceholder,
             ttlMs: p.options?.thinkingTtlMs,
             ensureThinkingEnabled: p.options?.ensureThinkingEnabled,
             defaultBudgetTokens: p.options?.defaultBudgetTokens,
@@ -533,7 +564,7 @@ export default DeepSeekThinkingFix;
 // Note: only the default export is intended for opencode's plugin loader.
 // Programmatic helpers and types live in `./api.js` to avoid the loader
 // trying to invoke a class constructor as a plugin.
-export type { ThinkingBlock, AnthropicRequestBody };
+export type { ThinkingBlock, AnthropicRequestBody, AnthropicPlaceholderOptions };
 export type {
   OpenAIChatRequestBody,
   OpenAIReasoningPayload,
